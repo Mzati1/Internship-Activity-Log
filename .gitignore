@@ -25,3 +25,9 @@ Thumbs.db
 
 # Internship Excel workbooks (local templates; not committed)
 *.xlsx
+.agents
+.claude
+.codex
+.impecable
+.opencode
+.cursor

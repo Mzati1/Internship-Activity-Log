@@ -1,56 +1,74 @@
-# CSIT-Internship-Activity-Log 🚀
+# CSIT-Internship-Activity-Log
 
-A modern web application built with Laravel to manage and automate internship activity logging. It syncs directly with Excel files to maintain a professional record.
+A Laravel app for managing internship activity logs, synced with Excel workbooks.
 
-## ✨ Features
-- **Dashboard Overview**: Track your progress through 16 weeks of internship.
-- **Smart Statuses**: 
-    - `Pending`: No logs yet.
-    - `In Progress`: Partial logs added.
-    - `Completed`: 5 daily logs from monday-friday  and a weekly summary provided.
-- **Sequential Logging**: Weeks unlock only after the previous week is completed.
-- **Student Profile**: Manage your Name, Reg No, Company, and Supervisor details via the UI.
-- **Excel Sync**: Automatically reads and writes to your internship Excel sheets.
+## Features
 
-## 📂 File Locations & Structure
-The app manages two main files in the root directory:
-- `CSIT-Internship Activity Log - 1.xlsx`: Stores Student Profile (Cover Page) and Weekly Summaries.
-- `Daily_Reports.xlsx`: Stores detailed daily activity logs.
+- **Dashboard overview**: Track progress across 16 internship weeks.
+- **Smart statuses**:
+  - `Pending`: No logs yet.
+  - `In Progress`: Partial logs added.
+  - `Completed`: 5 daily logs (Mon–Fri) plus a weekly summary.
+- **Sequential logging**: Weeks unlock only after the previous week is completed.
+- **Student profile**: Name, Reg No, Company, and Supervisor details via the UI.
+- **Excel sync**: Reads and writes the internship Excel sheets at the project root.
 
-## 🛠️ Setup Instructions
+## File locations
 
-### 1. Prerequisites
-- **PHP 8.1+**
-- **Composer**
+Keep these two workbooks in the **project root** (they are gitignored):
 
-### 2. Installation
-1.  **Clone the repository**:
-    ```bash
-    git clone [repository-url]
-    cd Activity_Log_Tracker
-    ```
-2.  **Install Dependencies**:
-    ```bash
-    cd activity-log-tracker
-    composer install
-    ```
-3.  **Configure Environment**:
-    - Copy `.env.example` to `.env` (if needed)
-    - Ensure your Excel log files are in the project root
+- `CSIT-Internship Activity Log - 1.xlsx` — Cover page / student profile and weekly summaries.
+- `Daily_Reports.xlsx` — Daily activity logs (headers: Week, Date, Activity).
 
-### 3. Running the App
-1.  **Start the Laravel Server**:
-    ```bash
-    cd activity-log-tracker
-    php artisan serve
-    ```
-2.  **Access the Dashboard**:
-    Open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+## Prerequisites
 
-## 💡 Troubleshooting
-- **"Resource temporarily unavailable"**: This happens if the Excel file is open in another app. **Close Excel** and try again.
-- **Missing File**: If the Excel files are moved, the app will error. Keep them in the root directory of the project.
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (or Docker Engine + Compose)
+- Composer (host) for the initial dependency install / Sail bootstrap
 
-## 📝 Usage Tips
-- **Pre-filled Dates**: The daily activity form defaults to today's date for faster entry.
-- **Full Width**: The application is optimized for full-screen use to display data clearly.
+## Setup with Laravel Sail
+
+```bash
+git clone <repository-url>
+cd Internship-Activity-Log
+
+# Install PHP dependencies (publishes Sail binaries)
+composer install
+
+# Environment
+cp .env.example .env
+# If compose.yaml is missing, publish Sail services once:
+# php artisan sail:install --with=mysql,redis,mailpit
+php artisan key:generate
+
+# Place Excel templates in the project root (see above), then start the stack
+./vendor/bin/sail up -d
+./vendor/bin/sail artisan migrate
+./vendor/bin/sail npm install
+./vendor/bin/sail npm run build
+```
+
+Open [http://localhost](http://localhost) for the dashboard.
+
+Optional Sail alias (add to your shell profile):
+
+```bash
+alias sail='./vendor/bin/sail'
+```
+
+## Useful Sail commands
+
+```bash
+./vendor/bin/sail up -d          # start containers
+./vendor/bin/sail down           # stop containers
+./vendor/bin/sail artisan migrate
+./vendor/bin/sail artisan test
+./vendor/bin/sail npm run build
+```
+
+Mailpit UI (when running): [http://localhost:8025](http://localhost:8025)
+
+## Troubleshooting
+
+- **"Resource temporarily unavailable"**: Close the Excel file in another app and retry.
+- **Missing file**: Ensure both `.xlsx` workbooks live in the project root (same directory as `artisan`).
+- **Port already in use**: Set `APP_PORT` / `FORWARD_DB_PORT` in `.env` before `sail up`.

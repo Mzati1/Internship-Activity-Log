@@ -3,27 +3,61 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Maatwebsite\Excel\Facades\Excel;
-use Carbon\Carbon;
 
 class WeeklyLogController extends Controller
 {
+    private function activityLogPath(): string
+    {
+        return base_path('CSIT-Internship Activity Log - 1.xlsx');
+    }
+
+    private function dailyReportsPath(): string
+    {
+        return base_path('Daily_Reports.xlsx');
+    }
+
+    /**
+     * Normalize Excel cell values that may be serial dates or DateTime objects.
+     */
+    private function formatExcelDate($cell, $fallback = 'Not Set'): string
+    {
+        if ($cell === null) {
+            return $fallback;
+        }
+
+        $val = $cell->getValue();
+        if ($val === null || $val === '') {
+            return $fallback;
+        }
+
+        if (\PhpOffice\PhpSpreadsheet\Shared\Date::isDateTime($cell)) {
+            return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject($val)->format('Y-m-d');
+        }
+
+        if ($val instanceof \DateTimeInterface) {
+            return $val->format('Y-m-d');
+        }
+
+        if (is_numeric($val) && (float) $val > 20000 && (float) $val < 80000) {
+            try {
+                return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $val)->format('Y-m-d');
+            } catch (\Exception $e) {
+                // fall through
+            }
+        }
+
+        return (string) $val;
+    }
+
     public function index()
     {
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
-        $dailyFile = base_path('../Daily_Reports.xlsx');
-        
+        $filePath = $this->activityLogPath();
+        $dailyFile = $this->dailyReportsPath();
+
         $dailyCounts = [];
-        $studentDetails = [
-            'name' => 'Not Set',
-            'reg_number' => 'Not Set',
-            'company' => 'Not Set',
-            'supervisor' => 'Not Set',
-        ];
-        
+
         // 1. Pre-load Daily Log Counts (Unique dates per week)
         if (file_exists($dailyFile)) {
-            // ... (keep existing daily count logic) ...
             try {
                 $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
                 $dailySheet = $dailySpreadsheet->getActiveSheet();
@@ -40,10 +74,11 @@ class WeeklyLogController extends Controller
                         if (!isset($dailyCounts[$w])) {
                             $dailyCounts[$w] = [];
                         }
-                        $dailyCounts[$w][$d] = true; 
+                        $dailyCounts[$w][$d] = true;
                     }
                 }
-            } catch (\Exception $e) {}
+            } catch (\Exception $e) {
+            }
         }
 
         $weeks = [];
@@ -62,7 +97,7 @@ class WeeklyLogController extends Controller
         if (file_exists($filePath)) {
             try {
                 $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-                
+
                 // Fetch Student Details from COVER-PAGE
                 $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
                 if ($coverSheet) {
@@ -71,7 +106,7 @@ class WeeklyLogController extends Controller
                     $studentDetails['company'] = $coverSheet->getCell('C5')->getValue() ?: 'Not Set';
                     $studentDetails['supervisor'] = $coverSheet->getCell('C6')->getValue() ?: 'Not Set';
                     $studentDetails['supervisor_email'] = $coverSheet->getCell('C7')->getValue() ?: 'Not Set';
-                    $studentDetails['start_date'] = $coverSheet->getCell('C8')->getValue() ?: 'Not Set';
+                    $studentDetails['start_date'] = $this->formatExcelDate($coverSheet->getCell('C8'));
                     $studentDetails['supervisor_signature'] = $this->hasSupervisorSignatureImage($coverSheet) ? 'Uploaded' : 'Not Set';
                 }
 
@@ -123,13 +158,13 @@ class WeeklyLogController extends Controller
         
         // If no week specified, calculate current week
         if (!$week) {
-            $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
+            $filePath = $this->activityLogPath();
             if (file_exists($filePath)) {
                 try {
                     $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
                     $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
                     if ($coverSheet) {
-                        $startDate = $coverSheet->getCell('C8')->getValue();
+                        $startDate = $this->formatExcelDate($coverSheet->getCell('C8'), '');
                         if ($startDate) {
                             $start = new \DateTime($startDate);
                             $today = new \DateTime('today');
@@ -138,7 +173,8 @@ class WeeklyLogController extends Controller
                             $week = max(1, min(16, ceil($daysDiff / 7)));
                         }
                     }
-                } catch (\Exception $e) {}
+                } catch (\Exception $e) {
+                }
             }
             $week = $week ?? 1; // Default to week 1
         }
@@ -207,18 +243,22 @@ class WeeklyLogController extends Controller
      */
     private function getWeekDataInternal($week)
     {
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
-        if (!file_exists($filePath)) return [];
+        $filePath = $this->activityLogPath();
+        if (!file_exists($filePath)) {
+            return [];
+        }
 
         try {
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
             $sheet = $spreadsheet->getSheetByName("WEEK-{$week}");
-            if (!$sheet) return [];
+            if (!$sheet) {
+                return [];
+            }
 
             $summary = trim($sheet->getCell('A7')->getValue() ?? '');
-            
+
             // Daily check
-            $dailyFile = base_path('../Daily_Reports.xlsx');
+            $dailyFile = $this->dailyReportsPath();
             $daysLogged = 0;
             if (file_exists($dailyFile)) {
                 $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
@@ -269,7 +309,7 @@ class WeeklyLogController extends Controller
         }
 
         $sheetName = "WEEK-{$weekNumber}";
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
+        $filePath = $this->activityLogPath();
 
         if (!file_exists($filePath)) {
             return back()->withErrors(['file' => 'Excel file not found.']);
@@ -324,7 +364,7 @@ class WeeklyLogController extends Controller
     public function getWeekData($week)
     {
         $sheetName = "WEEK-{$week}";
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
+        $filePath = $this->activityLogPath();
 
         if (!file_exists($filePath)) {
             return response()->json(['error' => 'Excel file not found'], 404);
@@ -349,7 +389,7 @@ class WeeklyLogController extends Controller
 
             // Fetch Daily Logs
             $dailyLogs = [];
-            $dailyFile = base_path('../Daily_Reports.xlsx');
+            $dailyFile = $this->dailyReportsPath();
             if (file_exists($dailyFile)) {
                 try {
                     $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
@@ -383,11 +423,11 @@ class WeeklyLogController extends Controller
             $profileStart = 'Not Set';
             $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
             if ($coverSheet) {
-                $profileStart = $coverSheet->getCell('C8')->getValue();
+                $profileStart = $this->formatExcelDate($coverSheet->getCell('C8'));
             }
 
             return response()->json([
-                'start_date' => $sheet->getCell('D2')->getFormattedValue(), 
+                'start_date' => $sheet->getCell('D2')->getFormattedValue(),
                 'end_date' => $sheet->getCell('E2')->getFormattedValue(),
                 'days_present' => $sheet->getCell('D4')->getValue(),
                 'days_absent' => $sheet->getCell('D5')->getValue(),
@@ -410,13 +450,13 @@ class WeeklyLogController extends Controller
         ]);
 
         // Date Range Validation
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
+        $filePath = $this->activityLogPath();
         if (file_exists($filePath)) {
             try {
                 $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
                 $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
                 if ($coverSheet) {
-                    $internStart = $coverSheet->getCell('C8')->getValue();
+                    $internStart = $this->formatExcelDate($coverSheet->getCell('C8'), '');
                     if ($internStart) {
                         $start = new \DateTime($internStart);
                         $weekStart = clone $start;
@@ -430,13 +470,14 @@ class WeeklyLogController extends Controller
                         if ($logDate < $weekStart || $logDate > $weekEnd) {
                             return response()->json(['error' => "Date must be within Week {$request->week} range (" . $weekStart->format('Y-m-d') . " to " . $weekEnd->format('Y-m-d') . ")"], 422);
                         }
-                        
+
                         if ($logDate > $today) {
                             return response()->json(['error' => "You cannot log activities for future dates."], 422);
                         }
                     }
                 }
-            } catch (\Exception $e) {}
+            } catch (\Exception $e) {
+            }
         }
 
         // Backend Lock Check
@@ -447,7 +488,7 @@ class WeeklyLogController extends Controller
             }
         }
 
-        $filePath = base_path('../Daily_Reports.xlsx');
+        $filePath = $this->dailyReportsPath();
         if (!file_exists($filePath)) {
             return response()->json(['error' => 'Daily Reports file not found'], 404);
         }
@@ -481,7 +522,7 @@ class WeeklyLogController extends Controller
             'activity' => 'required|string',
         ]);
 
-        $filePath = base_path('../Daily_Reports.xlsx');
+        $filePath = $this->dailyReportsPath();
         if (!file_exists($filePath)) {
             return response()->json(['error' => 'File not found'], 404);
         }
@@ -489,7 +530,7 @@ class WeeklyLogController extends Controller
         try {
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
             $sheet = $spreadsheet->getActiveSheet();
-            
+
             $row = $request->row_index;
             $sheet->setCellValue('B' . $row, $request->date);
             $sheet->setCellValue('C' . $row, $request->activity);
@@ -510,12 +551,15 @@ class WeeklyLogController extends Controller
             'row_index' => 'required|integer',
         ]);
 
-        $filePath = base_path('../Daily_Reports.xlsx');
+        $filePath = $this->dailyReportsPath();
+        if (!file_exists($filePath)) {
+            return response()->json(['error' => 'Daily Reports file not found'], 404);
+        }
 
         try {
             $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
             $sheet = $spreadsheet->getActiveSheet();
-            
+
             $sheet->removeRow($request->row_index);
 
             $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
@@ -540,7 +584,7 @@ class WeeklyLogController extends Controller
             'start_date' => 'required|date',
         ]);
 
-        $filePath = base_path('../CSIT-Internship Activity Log - 1.xlsx');
+        $filePath = $this->activityLogPath();
         if (!file_exists($filePath)) {
             return back()->withErrors(['error' => 'Excel file not found']);
         }

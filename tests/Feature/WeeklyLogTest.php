@@ -11,7 +11,7 @@ class WeeklyLogTest extends TestCase
         $response = $this->get('/');
 
         $response->assertOk();
-        $response->assertSee('Weekly Progress', false);
+        $response->assertSee('Sixteen weeks', false);
         $response->assertSee('Week 1', false);
     }
 
@@ -23,18 +23,26 @@ class WeeklyLogTest extends TestCase
             $this->markTestSkipped('Daily_Reports.xlsx is not present; skipping Excel write smoke test.');
         }
 
-        $response = $this->postJson(route('weekly-log.daily.store'), [
-            'week' => 1,
-            'date' => '2026-02-04',
-            'activity' => 'Test Activity via PHPUnit',
-        ]);
+        // Snapshot so the smoke write does not leave fixture pollution behind.
+        $backup = $dailyFile . '.phpunit-bak';
+        copy($dailyFile, $backup);
 
-        // Accept success, missing activity log / validation failures, or lock errors —
-        // the goal is not to require a fully populated Excel fixture set.
-        $this->assertContains($response->status(), [200, 403, 404, 422]);
+        try {
+            $response = $this->postJson(route('weekly-log.daily.store'), [
+                'week' => 1,
+                'date' => '2026-02-04',
+                'activity' => 'Test Activity via PHPUnit',
+            ]);
 
-        if ($response->status() === 200) {
-            $response->assertJson(['success' => true]);
+            $this->assertContains($response->status(), [200, 403, 404, 422]);
+
+            if ($response->status() === 200) {
+                $response->assertJson(['success' => true]);
+            }
+        } finally {
+            if (file_exists($backup)) {
+                rename($backup, $dailyFile);
+            }
         }
     }
 

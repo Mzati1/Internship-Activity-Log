@@ -50,6 +50,26 @@ class WeeklyLogController extends Controller
         return null;
     }
 
+    private function cellPlain($cell): string
+    {
+        if ($cell === null) {
+            return '';
+        }
+
+        $val = $cell->getValue();
+        if ($val === null || $val === '') {
+            return '';
+        }
+        if ($val instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+            return trim($val->getPlainText());
+        }
+        if ($val instanceof \DateTimeInterface) {
+            return $val->format('Y-m-d');
+        }
+
+        return trim((string) $val);
+    }
+
     /**
      * Normalize Excel cell values that may be serial dates or DateTime objects.
      */
@@ -72,6 +92,10 @@ class WeeklyLogController extends Controller
             return $val->format('Y-m-d');
         }
 
+        if ($val instanceof \PhpOffice\PhpSpreadsheet\RichText\RichText) {
+            $val = $val->getPlainText();
+        }
+
         if (is_numeric($val) && (float) $val > 20000 && (float) $val < 80000) {
             try {
                 return \PhpOffice\PhpSpreadsheet\Shared\Date::excelToDateTimeObject((float) $val)->format('Y-m-d');
@@ -80,7 +104,120 @@ class WeeklyLogController extends Controller
             }
         }
 
-        return (string) $val;
+        $parsed = $this->parseFlexibleDate((string) $val);
+
+        return $parsed ? $parsed->format('Y-m-d') : (trim((string) $val) ?: $fallback);
+    }
+
+    private function parseFlexibleDate(string $raw): ?\DateTime
+    {
+        $raw = trim($raw);
+        if ($raw === '' || strcasecmp($raw, 'Not Set') === 0) {
+            return null;
+        }
+
+        try {
+            return new \DateTime($raw);
+        } catch (\Exception $e) {
+            // continue
+        }
+
+        $normalized = preg_replace('/(\d+)(ST|ND|RD|TH)/i', '$1', $raw);
+        $normalized = preg_replace('/\s+/', ' ', (string) $normalized);
+        $normalized = str_ireplace('FEBRURARY', 'FEBRUARY', $normalized);
+        $ts = strtotime($normalized);
+        if ($ts === false) {
+            return null;
+        }
+
+        return (new \DateTime())->setTimestamp($ts);
+    }
+
+    private function coverField(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, string $cCell, string $bCell): string
+    {
+        $fromC = $this->cellPlain($sheet->getCell($cCell));
+        if ($fromC !== '') {
+            return $fromC;
+        }
+
+        $fromB = $this->cellPlain($sheet->getCell($bCell));
+        if ($fromB === '') {
+            return '';
+        }
+        if (str_contains($fromB, ':')) {
+            [, $after] = explode(':', $fromB, 2);
+
+            return trim($after);
+        }
+
+        return $fromB;
+    }
+
+    private function readCoverProfile(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $cover): array
+    {
+        $startRaw = $this->coverField($cover, 'C8', 'B8');
+        $startDate = $this->formatExcelDate($cover->getCell('C8'), '');
+        if ($startDate === '' || $startDate === 'Not Set') {
+            $parsed = $this->parseFlexibleDate($startRaw);
+            $startDate = $parsed ? $parsed->format('Y-m-d') : ($startRaw !== '' ? $startRaw : 'Not set');
+        }
+
+        return [
+            'name' => $this->coverField($cover, 'C3', 'B3') ?: 'Not set',
+            'reg_number' => $this->coverField($cover, 'C4', 'B4') ?: 'Not set',
+            'company' => $this->coverField($cover, 'C5', 'B5') ?: 'Not set',
+            'supervisor' => $this->coverField($cover, 'C6', 'B6') ?: 'Not set',
+            'supervisor_email' => $this->coverField($cover, 'C7', 'B7') ?: 'Not set',
+            'start_date' => $startDate ?: 'Not set',
+            'supervisor_signature' => $this->hasSupervisorSignatureImage($cover) ? 'Uploaded' : 'Not set',
+        ];
+    }
+
+    private function writeCoverProfile(
+        \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet,
+        array $data
+    ): void {
+        $labels = [
+            3 => 'STUDENT NAME',
+            4 => 'REG NUMBER',
+            5 => 'COMPANY/ORGANIZATION',
+            6 => 'SUPERVISOR NAME',
+            7 => 'SUPERVISOR EMAIL',
+            8 => 'INTERNSHIP START DATE',
+        ];
+        $values = [
+            3 => $data['name'] ?? '',
+            4 => $data['reg_number'] ?? '',
+            5 => $data['company'] ?? '',
+            6 => $data['supervisor'] ?? '',
+            7 => $data['supervisor_email'] ?? '',
+            8 => $data['start_date'] ?? '',
+        ];
+
+        foreach ($labels as $row => $label) {
+            $sheet->setCellValue("B{$row}", $label . ':');
+            $sheet->setCellValue("C{$row}", $values[$row]);
+        }
+
+        $sheet->setCellValue('B9', 'SUPERVISOR SIGNATURE:');
+        $sheet->setCellValue('C9', '');
+    }
+
+    /** Week summary lives under the SUMMARY label (C7), with A7 as legacy fallback. */
+    private function weekSummary(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet): string
+    {
+        $c7 = trim($this->cellPlain($sheet->getCell('C7')));
+        if ($c7 !== '') {
+            return $c7;
+        }
+
+        return trim($this->cellPlain($sheet->getCell('A7')));
+    }
+
+    private function setWeekSummary(\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet $sheet, string $summary): void
+    {
+        $sheet->setCellValue('C7', $summary);
+        $sheet->setCellValue('A7', $summary);
     }
 
     public function index()
@@ -119,43 +256,36 @@ class WeeklyLogController extends Controller
         $previousWeekCompleted = true; // Week 1 is always unlocked
 
         $studentDetails = [
-            'name' => 'Not Set',
-            'reg_number' => 'Not Set',
-            'company' => 'Not Set',
-            'supervisor' => 'Not Set',
-            'supervisor_email' => 'Not Set',
-            'supervisor_signature' => 'Not Set',
-            'start_date' => 'Not Set',
+            'name' => 'Not set',
+            'reg_number' => 'Not set',
+            'company' => 'Not set',
+            'supervisor' => 'Not set',
+            'supervisor_email' => 'Not set',
+            'supervisor_signature' => 'Not set',
+            'start_date' => 'Not set',
         ];
 
         if (file_exists($filePath)) {
             try {
                 $spreadsheet = $this->loadSpreadsheet($filePath);
 
-                // Fetch Student Details from COVER-PAGE
                 $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                 if ($coverSheet) {
-                    $studentDetails['name'] = $coverSheet->getCell('C3')->getValue() ?: 'Not Set';
-                    $studentDetails['reg_number'] = $coverSheet->getCell('C4')->getValue() ?: 'Not Set';
-                    $studentDetails['company'] = $coverSheet->getCell('C5')->getValue() ?: 'Not Set';
-                    $studentDetails['supervisor'] = $coverSheet->getCell('C6')->getValue() ?: 'Not Set';
-                    $studentDetails['supervisor_email'] = $coverSheet->getCell('C7')->getValue() ?: 'Not Set';
-                    $studentDetails['start_date'] = $this->formatExcelDate($coverSheet->getCell('C8'));
-                    $studentDetails['supervisor_signature'] = $this->hasSupervisorSignatureImage($coverSheet) ? 'Uploaded' : 'Not Set';
+                    $studentDetails = $this->readCoverProfile($coverSheet);
                 }
 
                 for ($i = 1; $i <= 16; $i++) {
                     $sheetName = "WEEK-{$i}";
                     $sheet = $this->sheetByName($spreadsheet, $sheetName);
-                    
+
                     $status = 'Pending';
                     $summary = '';
                     $isLocked = !$previousWeekCompleted;
 
                     if ($sheet) {
-                        $summary = trim($sheet->getCell('A7')->getValue() ?? '');
+                        $summary = $this->weekSummary($sheet);
                         $daysLogged = isset($dailyCounts[$i]) ? count($dailyCounts[$i]) : 0;
-                        
+
                         if (!empty($summary) && $daysLogged >= 5) {
                             $status = 'Completed';
                         } elseif (!empty($summary) || $daysLogged > 0) {
@@ -170,14 +300,12 @@ class WeeklyLogController extends Controller
                         'preview' => \Illuminate\Support\Str::limit($summary, 50),
                     ];
 
-                    // For next iteration
                     $previousWeekCompleted = ($status === 'Completed');
                 }
             } catch (\Exception $e) {
                 // Handle error gracefully
             }
         } else {
-            // Fallback if file missing
             for ($i = 1; $i <= 16; $i++) {
                 $weeks[] = ['number' => $i, 'status' => 'Pending', 'is_locked' => ($i > 1), 'preview' => ''];
             }
@@ -198,13 +326,14 @@ class WeeklyLogController extends Controller
                     $spreadsheet = $this->loadSpreadsheet($filePath);
                     $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                     if ($coverSheet) {
-                        $startDate = $this->formatExcelDate($coverSheet->getCell('C8'), '');
-                        if ($startDate) {
-                            $start = new \DateTime($startDate);
+                        $profile = $this->readCoverProfile($coverSheet);
+                        $startDate = $profile['start_date'] ?? '';
+                        $parsed = $this->parseFlexibleDate((string) $startDate);
+                        if ($parsed) {
                             $today = new \DateTime('today');
-                            $diff = $start->diff($today);
+                            $diff = $parsed->diff($today);
                             $daysDiff = $diff->days + 1;
-                            $week = max(1, min(16, ceil($daysDiff / 7)));
+                            $week = max(1, min(16, (int) ceil($daysDiff / 7)));
                         }
                     }
                 } catch (\Exception $e) {
@@ -289,7 +418,7 @@ class WeeklyLogController extends Controller
                 return [];
             }
 
-            $summary = trim($sheet->getCell('A7')->getValue() ?? '');
+            $summary = $this->weekSummary($sheet);
 
             // Daily check
             $dailyFile = $this->dailyReportsPath();
@@ -383,12 +512,12 @@ class WeeklyLogController extends Controller
             $sheet->setCellValue('E2', $validated['end_date']);
             $sheet->setCellValue('D4', $validated['days_present']);
             $sheet->setCellValue('D5', $validated['days_absent']);
-            $sheet->setCellValue('A7', $validated['summary']); // Assuming it starts here
+            $this->setWeekSummary($sheet, $validated['summary']);
 
             $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
             $writer->save($filePath);
 
-            return back()->with('success', "Log for Week {$weekNumber} saved successfully!");
+            return back()->with('success', "Week {$weekNumber} summary saved.");
 
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Failed to save to Excel: ' . $e->getMessage()]);
@@ -454,10 +583,10 @@ class WeeklyLogController extends Controller
                 }
             }
 
-            $profileStart = 'Not Set';
+            $profileStart = 'Not set';
             $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
             if ($coverSheet) {
-                $profileStart = $this->formatExcelDate($coverSheet->getCell('C8'));
+                $profileStart = $this->readCoverProfile($coverSheet)['start_date'];
             }
 
             return response()->json([
@@ -465,7 +594,7 @@ class WeeklyLogController extends Controller
                 'end_date' => $sheet->getCell('E2')->getFormattedValue(),
                 'days_present' => $sheet->getCell('D4')->getValue(),
                 'days_absent' => $sheet->getCell('D5')->getValue(),
-                'summary' => $sheet->getCell('A7')->getValue(),
+                'summary' => $this->weekSummary($sheet),
                 'daily_logs' => $dailyLogs,
                 'internship_start' => $profileStart
             ]);
@@ -490,9 +619,9 @@ class WeeklyLogController extends Controller
                 $spreadsheet = $this->loadSpreadsheet($filePath);
                 $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                 if ($coverSheet) {
-                    $internStart = $this->formatExcelDate($coverSheet->getCell('C8'), '');
-                    if ($internStart) {
-                        $start = new \DateTime($internStart);
+                    $internStart = $this->readCoverProfile($coverSheet)['start_date'] ?? '';
+                    $start = $this->parseFlexibleDate((string) $internStart);
+                    if ($start) {
                         $weekStart = clone $start;
                         $weekStart->modify('+' . ($request->week - 1) * 7 . ' days');
                         $weekEnd = clone $weekStart;
@@ -502,11 +631,11 @@ class WeeklyLogController extends Controller
                         $today = new \DateTime('today');
 
                         if ($logDate < $weekStart || $logDate > $weekEnd) {
-                            return response()->json(['error' => "Date must be within Week {$request->week} range (" . $weekStart->format('Y-m-d') . " to " . $weekEnd->format('Y-m-d') . ")"], 422);
+                            return response()->json(['error' => "Pick a date in Week {$request->week} ({$weekStart->format('Y-m-d')} to {$weekEnd->format('Y-m-d')})."], 422);
                         }
 
                         if ($logDate > $today) {
-                            return response()->json(['error' => "You cannot log activities for future dates."], 422);
+                            return response()->json(['error' => 'Future dates cannot be logged.'], 422);
                         }
                     }
                 }
@@ -631,14 +760,14 @@ class WeeklyLogController extends Controller
                 return back()->withErrors(['error' => 'COVER-PAGE not found in Excel file']);
             }
 
-            $sheet->setCellValue('C3', $request->name);
-            $sheet->setCellValue('C4', $request->reg_number);
-            $sheet->setCellValue('C5', $request->company);
-            $sheet->setCellValue('C6', $request->supervisor);
-            $sheet->setCellValue('C7', $request->supervisor_email);
-            $sheet->setCellValue('C8', $request->start_date);
-            $sheet->setCellValue('B9', 'SUPERVISOR SIGNATURE:');
-            $sheet->setCellValue('C9', '');
+            $this->writeCoverProfile($sheet, [
+                'name' => $request->name,
+                'reg_number' => $request->reg_number,
+                'company' => $request->company,
+                'supervisor' => $request->supervisor,
+                'supervisor_email' => $request->supervisor_email,
+                'start_date' => $request->start_date,
+            ]);
 
             if ($request->hasFile('supervisor_signature')) {
                 $this->embedSupervisorSignatureImage($sheet, $request->file('supervisor_signature'));
@@ -647,7 +776,7 @@ class WeeklyLogController extends Controller
             $writer = \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, 'Xlsx');
             $writer->save($filePath);
 
-            return back()->with('success', 'Profile updated successfully!');
+            return back()->with('success', 'Profile saved to the activity log workbook.');
 
         } catch (\Exception $e) {
             return back()->withErrors(['error' => 'Failed to update profile: ' . $e->getMessage()]);

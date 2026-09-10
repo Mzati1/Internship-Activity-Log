@@ -72,6 +72,16 @@ if ($cover) {
         }
 
         $cover->setCellValue("B{$row}", $label . ':');
+        if ($row === 8) {
+            $parsed = null;
+            $normalized = preg_replace('/(\d+)(ST|ND|RD|TH)/i', '$1', $value);
+            $normalized = preg_replace('/\s+/', ' ', (string) $normalized);
+            $normalized = str_ireplace('FEBRURARY', 'FEBRUARY', $normalized);
+            $ts = strtotime((string) $normalized);
+            if ($ts !== false) {
+                $value = date('Y-m-d', $ts);
+            }
+        }
         $cover->setCellValue("C{$row}", $value);
     }
 

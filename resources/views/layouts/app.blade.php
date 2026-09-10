@@ -3,42 +3,64 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Internship Activity Log</title>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Inter', sans-serif; }
-    </style>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <title>@yield('title', 'CSIT Internship Activity Log')</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+    @vite(['resources/css/app.css', 'resources/js/app.js'])
 </head>
-<body class="bg-gradient-to-br from-slate-50 to-slate-100 min-h-screen text-slate-800 antialiased">
-    <!-- Navbar -->
-    <nav class="bg-white/80 backdrop-blur-md shadow-sm border-b border-slate-200 sticky top-0 z-50">
-        <div class="w-full px-6">
-            <div class="flex justify-between h-16">
-                <div class="flex">
-                    <div class="shrink-0 flex items-center">
-                        <a href="{{ route('dashboard') }}" class="font-bold text-2xl bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-violet-600">CSIT-Internship-Activity-Log</a>
-                    </div>
-                    <div class="hidden space-x-8 sm:-my-px sm:ml-10 sm:flex">
-                        <a href="{{ route('dashboard') }}" class="inline-flex items-center px-1 pt-1 border-b-2 {{ request()->routeIs('dashboard') ? 'border-indigo-500 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }} text-sm font-medium leading-5 transition duration-150 ease-in-out">
-                            Dashboard
-                        </a>
-                        <a href="{{ route('weekly-log.create') }}" class="inline-flex items-center px-1 pt-1 border-b-2 {{ request()->routeIs('weekly-log.create') ? 'border-indigo-500 text-gray-900' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300' }} text-sm font-medium leading-5 transition duration-150 ease-in-out">
-                            Add Log
-                        </a>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </nav>
+<body class="min-h-screen bg-paper text-ink antialiased">
+    <header class="border-b border-line bg-surface">
+        <div class="shell flex min-h-14 items-center justify-between gap-4 py-3">
+            <a href="{{ route('dashboard') }}" class="text-base font-semibold tracking-tight text-ink">
+                CSIT Internship Activity Log
+            </a>
 
-    <!-- Page Content -->
-    <main class="py-10">
-        <div class="w-full px-6">
-            @yield('content')
+            <button
+                type="button"
+                id="nav-toggle"
+                class="btn-secondary sm:hidden"
+                aria-expanded="false"
+                aria-controls="primary-nav"
+            >
+                Menu
+            </button>
+
+            <nav id="primary-nav" class="hidden w-full flex-col gap-1 sm:flex sm:w-auto sm:flex-row sm:items-center sm:gap-6">
+                <a
+                    href="{{ route('dashboard') }}"
+                    class="rounded-md px-2 py-2 text-sm font-medium {{ request()->routeIs('dashboard') ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:text-ink' }}"
+                >
+                    Weeks
+                </a>
+                <a
+                    href="{{ route('weekly-log.create') }}"
+                    class="rounded-md px-2 py-2 text-sm font-medium {{ request()->routeIs('weekly-log.create') ? 'bg-accent-soft text-accent' : 'text-ink-muted hover:text-ink' }}"
+                >
+                    Current week
+                </a>
+            </nav>
         </div>
+    </header>
+
+    <main class="shell py-8 sm:py-10">
+        @yield('content')
     </main>
+
+    <script>
+        (function () {
+            const toggle = document.getElementById('nav-toggle');
+            const nav = document.getElementById('primary-nav');
+            if (!toggle || !nav) return;
+            toggle.addEventListener('click', function () {
+                const open = nav.classList.toggle('hidden') === false;
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+                if (open) {
+                    nav.classList.add('flex');
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

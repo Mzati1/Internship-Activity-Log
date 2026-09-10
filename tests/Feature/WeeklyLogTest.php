@@ -9,7 +9,10 @@ class WeeklyLogTest extends TestCase
     public function test_can_view_dashboard()
     {
         $response = $this->get('/');
-        $response->assertStatus(200);
+
+        $response->assertOk();
+        $response->assertSee('Weekly Progress', false);
+        $response->assertSee('Week 1', false);
     }
 
     public function test_can_store_daily_log()

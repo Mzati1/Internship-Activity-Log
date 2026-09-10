@@ -17,6 +17,40 @@ class WeeklyLogController extends Controller
     }
 
     /**
+     * Load a workbook while silencing PhpSpreadsheet 1.x deprecations on PHP 8.4+.
+     */
+    private function loadSpreadsheet(string $path): \PhpOffice\PhpSpreadsheet\Spreadsheet
+    {
+        $previous = error_reporting(E_ALL & ~E_DEPRECATED & ~E_USER_DEPRECATED);
+
+        try {
+            return \PhpOffice\PhpSpreadsheet\IOFactory::load($path);
+        } finally {
+            error_reporting($previous);
+        }
+    }
+
+    /**
+     * Resolve a sheet by name, tolerating trailing spaces in workbook tab names.
+     */
+    private function sheetByName(\PhpOffice\PhpSpreadsheet\Spreadsheet $spreadsheet, string $name): ?\PhpOffice\PhpSpreadsheet\Worksheet\Worksheet
+    {
+        $sheet = $spreadsheet->getSheetByName($name);
+        if ($sheet) {
+            return $sheet;
+        }
+
+        $wanted = trim($name);
+        foreach ($spreadsheet->getAllSheets() as $candidate) {
+            if (trim($candidate->getTitle()) === $wanted) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * Normalize Excel cell values that may be serial dates or DateTime objects.
      */
     private function formatExcelDate($cell, $fallback = 'Not Set'): string
@@ -59,7 +93,7 @@ class WeeklyLogController extends Controller
         // 1. Pre-load Daily Log Counts (Unique dates per week)
         if (file_exists($dailyFile)) {
             try {
-                $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
+                $dailySpreadsheet = $this->loadSpreadsheet($dailyFile);
                 $dailySheet = $dailySpreadsheet->getActiveSheet();
                 foreach ($dailySheet->getRowIterator(2) as $row) {
                     $cellIterator = $row->getCellIterator();
@@ -96,10 +130,10 @@ class WeeklyLogController extends Controller
 
         if (file_exists($filePath)) {
             try {
-                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+                $spreadsheet = $this->loadSpreadsheet($filePath);
 
                 // Fetch Student Details from COVER-PAGE
-                $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
+                $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                 if ($coverSheet) {
                     $studentDetails['name'] = $coverSheet->getCell('C3')->getValue() ?: 'Not Set';
                     $studentDetails['reg_number'] = $coverSheet->getCell('C4')->getValue() ?: 'Not Set';
@@ -112,7 +146,7 @@ class WeeklyLogController extends Controller
 
                 for ($i = 1; $i <= 16; $i++) {
                     $sheetName = "WEEK-{$i}";
-                    $sheet = $spreadsheet->getSheetByName($sheetName);
+                    $sheet = $this->sheetByName($spreadsheet, $sheetName);
                     
                     $status = 'Pending';
                     $summary = '';
@@ -161,8 +195,8 @@ class WeeklyLogController extends Controller
             $filePath = $this->activityLogPath();
             if (file_exists($filePath)) {
                 try {
-                    $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-                    $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
+                    $spreadsheet = $this->loadSpreadsheet($filePath);
+                    $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                     if ($coverSheet) {
                         $startDate = $this->formatExcelDate($coverSheet->getCell('C8'), '');
                         if ($startDate) {
@@ -249,8 +283,8 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-            $sheet = $spreadsheet->getSheetByName("WEEK-{$week}");
+            $spreadsheet = $this->loadSpreadsheet($filePath);
+            $sheet = $this->sheetByName($spreadsheet, "WEEK-{$week}");
             if (!$sheet) {
                 return [];
             }
@@ -261,7 +295,7 @@ class WeeklyLogController extends Controller
             $dailyFile = $this->dailyReportsPath();
             $daysLogged = 0;
             if (file_exists($dailyFile)) {
-                $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
+                $dailySpreadsheet = $this->loadSpreadsheet($dailyFile);
                 $dailySheet = $dailySpreadsheet->getActiveSheet();
                 $uniqueDates = [];
                 foreach ($dailySheet->getRowIterator(2) as $row) {
@@ -320,8 +354,8 @@ class WeeklyLogController extends Controller
             // Using a simple spreadhseet manipulation approach or Maatwebsite import/export
             // Since we need to write to specific cells in an existing file, loading it is best.
             
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-            $sheet = $spreadsheet->getSheetByName($sheetName);
+            $spreadsheet = $this->loadSpreadsheet($filePath);
+            $sheet = $this->sheetByName($spreadsheet, $sheetName);
 
             if (!$sheet) {
                 return back()->withErrors(['week' => "Sheet $sheetName not found in Excel file."]);
@@ -371,8 +405,8 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-            $sheet = $spreadsheet->getSheetByName($sheetName);
+            $spreadsheet = $this->loadSpreadsheet($filePath);
+            $sheet = $this->sheetByName($spreadsheet, $sheetName);
 
             if (!$sheet) {
                 return response()->json(['error' => "Sheet $sheetName not found"], 404);
@@ -392,7 +426,7 @@ class WeeklyLogController extends Controller
             $dailyFile = $this->dailyReportsPath();
             if (file_exists($dailyFile)) {
                 try {
-                    $dailySpreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($dailyFile);
+                    $dailySpreadsheet = $this->loadSpreadsheet($dailyFile);
                     $dailySheet = $dailySpreadsheet->getActiveSheet();
                     foreach ($dailySheet->getRowIterator(2) as $row) {
                         $cellIterator = $row->getCellIterator();
@@ -421,7 +455,7 @@ class WeeklyLogController extends Controller
             }
 
             $profileStart = 'Not Set';
-            $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
+            $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
             if ($coverSheet) {
                 $profileStart = $this->formatExcelDate($coverSheet->getCell('C8'));
             }
@@ -453,8 +487,8 @@ class WeeklyLogController extends Controller
         $filePath = $this->activityLogPath();
         if (file_exists($filePath)) {
             try {
-                $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-                $coverSheet = $spreadsheet->getSheetByName('COVER-PAGE');
+                $spreadsheet = $this->loadSpreadsheet($filePath);
+                $coverSheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
                 if ($coverSheet) {
                     $internStart = $this->formatExcelDate($coverSheet->getCell('C8'), '');
                     if ($internStart) {
@@ -494,7 +528,7 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+            $spreadsheet = $this->loadSpreadsheet($filePath);
             $sheet = $spreadsheet->getActiveSheet();
             
             // Find next empty row
@@ -528,7 +562,7 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+            $spreadsheet = $this->loadSpreadsheet($filePath);
             $sheet = $spreadsheet->getActiveSheet();
 
             $row = $request->row_index;
@@ -557,7 +591,7 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
+            $spreadsheet = $this->loadSpreadsheet($filePath);
             $sheet = $spreadsheet->getActiveSheet();
 
             $sheet->removeRow($request->row_index);
@@ -590,8 +624,8 @@ class WeeklyLogController extends Controller
         }
 
         try {
-            $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-            $sheet = $spreadsheet->getSheetByName('COVER-PAGE');
+            $spreadsheet = $this->loadSpreadsheet($filePath);
+            $sheet = $this->sheetByName($spreadsheet, 'COVER-PAGE');
             
             if (!$sheet) {
                 return back()->withErrors(['error' => 'COVER-PAGE not found in Excel file']);
